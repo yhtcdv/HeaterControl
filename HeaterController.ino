@@ -1,6 +1,7 @@
 
 
 
+
 /*
   WiFi Web Server LED Blink
 
@@ -36,12 +37,16 @@
 #define HEATER_ENABLE 9
 #define PUMP_STROKE 6
 
+#define TEMP_SET_ANALOGUE A0 //varies between 2.4 and 2.6V
+#define MAX_SETPOINT_TEMP 35
+#define MIN_SETPOINT_TEMP 5
+
 #define BACK_LED 13
 #define TFT_CS 10
 #define TFT_DC 12
 #define TFT_RST 11
 
-#define TEMP_INLET_PIN A0
+#define TEMP_INLET_PIN A2
 #define TEMP_OUTLET_PIN A1
 
 
@@ -55,13 +60,16 @@ void update_graph(int x_pos, int y_pos, int val, uint16_t color);
 
 //////////////////// Web server stuff ///////////////////
 IPAddress ip(192, 168, 1, 1); //default IP address (a new onew will be assigned by DHCP)
-char ssid[] = "TP-LINK_C3A2";      //  your network SSID (name)
-char pass[] = "38091704";   // your network password
+char ssid[] = "motozplay";      //  your network SSID (name)
+char pass[] = "motozplay";   // your network password
+//char ssid[] = "TP-LINK_C3A2";      //  your network SSID (name)
+//char pass[] = "38091704";   // your network password
 //char ssid[] = "PLUSNET-FC7T";      //  your network SSID (name)
 //char pass[] = "4c3d9edcd3";   // your network password
 int keyIndex = 0;                 // your network key Index number (needed only for WEP)
 int status = WL_IDLE_STATUS;
 WiFiServer server(80);
+
 
 /*Create a tft object */
 Adafruit_ILI9340 tft = Adafruit_ILI9340(TFT_CS, TFT_DC, TFT_RST);
@@ -82,6 +90,9 @@ const float pump_volume = 0.000025;
 void interruptFunction() {
   pump_strokes++;
 }
+
+//////////////////// Control Stuff /////////////////
+int set_temp = 20;
 
 //////////////////// Display Stuff //////////////////////
 const int temp_value_pos_x = 15 * 12;
@@ -201,6 +212,9 @@ void setup() {
 
   tft.setTextColor(ILI9340_WHITE);
   tft.setTextSize(2);
+
+  analogWriteResolution(8);
+  analogWrite(TEMP_SET_ANALOGUE, map(set_temp, MIN_SETPOINT_TEMP, MAX_SETPOINT_TEMP, 160, 190));
 
 }
 
@@ -499,7 +513,7 @@ void update_graph(int x_pos, int y_pos, int val, int max_val, uint16_t color)
   //Draw the line
   tft.drawFastVLine(graph_cursor, tft.height() - val, 3, color);
 
-  if (graph_cursor ==  graph_width - 25)
+  if (graph_cursor ==  graph_width - 40)
   {
     graph_cursor = 25;
   }
