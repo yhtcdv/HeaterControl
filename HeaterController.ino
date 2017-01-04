@@ -1,26 +1,15 @@
-
-
-
-
 /*
-  WiFi Web Server LED Blink
+ Originally based on WiFi Web Server LED Blink by Tom Igoe (thanks for that!)
+ 
+ Uses the URL method for controlling the server logic (heater on/off)
+ Displays the sensors on both the web page and the TFT
 
-  A simple web server that lets you blink an LED via the web.
-  This sketch will print the IP address of your WiFi Shield (once connected)
-  to the Serial monitor. From there, you can open that address in a web browser
-  to turn on and off the LED on pin 9.
-
-  If the IP address of your shield is yourAddress:
-  http://yourAddress/H turns the LED on
-  http://yourAddress/L turns it off
-
-  This example is written for a network using WPA encryption. For
-  WEP or WPA, change the Wifi.begin() call accordingly.
-
-  Circuit:
-   WiFi shield attached
-   LED attached to pin 9
-
+ Circuit:
+   Feather M0 Wifi
+   2.2" TFT based on the ILI9341 (http://www.ebay.co.uk/itm/2-2-inch-SPI-TFT-LCD-ILI9341-Arduino-etc-UK-stock-/161862594139)
+   LPF for temp sensor inputs
+   12->5V linear regualtor to rum modules from 12V heater supply
+   
   created 25 Nov 2012
   by Tom Igoe
 */
@@ -132,21 +121,6 @@ const byte year = 17;
 
 void setup() {
 
-  // Set up the pump sense to be an interrupt
-  pinMode(PUMP_STROKE, INPUT_PULLUP);  // See http://arduino.cc/en/Tutorial/DigitalPins
-  enableInterrupt(PUMP_STROKE, interruptFunction, RISING);
-
-  /////////// Initialise the RTC ///////////
-  rtc.begin(); // initialize RTC 24H format
-
-  rtc.setTime(hours, minutes, seconds);
-  rtc.setDate(day, month, year);
-
-  rtc.setAlarmTime(16, 0, 100);
-  rtc.enableAlarm(rtc.MATCH_HHMMSS);
-
-  rtc.attachInterrupt(alarmMatch);
-
   /////////// Initialise the TFT ///////////
   tft.begin();
   tft.setRotation(3);
@@ -213,6 +187,22 @@ void setup() {
   tft.setTextColor(ILI9340_WHITE);
   tft.setTextSize(2);
 
+  /////////// Set up the pump sense to be an interrupt ///////////
+  pinMode(PUMP_STROKE, INPUT_PULLUP);  // See http://arduino.cc/en/Tutorial/DigitalPins
+  enableInterrupt(PUMP_STROKE, interruptFunction, RISING);
+
+  /////////// Initialise the RTC ///////////
+  rtc.begin(); // initialize RTC 24H format
+
+  rtc.setTime(hours, minutes, seconds);
+  rtc.setDate(day, month, year);
+
+  rtc.setAlarmTime(16, 0, 100);
+  rtc.enableAlarm(rtc.MATCH_HHMMSS);
+
+  rtc.attachInterrupt(alarmMatch);
+
+  /////////// Set up the temperature setpoint analogue pin //////////////////
   analogWriteResolution(8);
   analogWrite(TEMP_SET_ANALOGUE, map(set_temp, MIN_SETPOINT_TEMP, MAX_SETPOINT_TEMP, 160, 190));
 
@@ -237,9 +227,12 @@ void loop() {
       tft.fillRect(graph_cursor, tft.height() - graph_height, 20, graph_height, ILI9340_BLACK);
     }
 
-    tft.fillRect(temp_value_pos_x, temp_value_pos_y, 8 * 12, 64, ILI9340_BLACK);
+    tft.fillRect(temp_value_pos_x, temp_value_pos_y,  tft.height() - temp_value_pos_y, 64, ILI9340_BLACK);
     tft.setCursor(temp_value_pos_x, temp_value_pos_y);
-    tft.println(temp_inlet);
+    tft.print(temp_inlet);
+    tft.print(" (");
+    tft.print(set_temp);
+    tft.println(")");
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 16);
     tft.println(temp_outlet);
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 32);
@@ -311,13 +304,13 @@ void loop() {
             client.println("<H1>Boys Room Heater Control</H1>");
             if (heater_state != "running")
             {
-              client.println("<button onClick=location.href='/H\' style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
+              client.println("<button onClick=location.href='/HeaterEn\' style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
               client.println("Heater Enable");
               client.println("</button>");
             }
             else
             {
-              client.println("<button onClick=location.href='/L\' style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
+              client.println("<button onClick=location.href='/HeaterDis\' style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
               client.println("Heater Disable");
               client.println("</button>");
             }
@@ -352,6 +345,9 @@ void loop() {
 
             client.print("Inlet temp   = ");
             client.print(temp_inlet);
+            client.print(" (");
+            client.print(set_temp);
+            client.print(")");
             client.print("<br>");
             client.print("Outlet temp  = ");
             client.print(temp_outlet);
@@ -372,28 +368,6 @@ void loop() {
             // break out of the while loop:
             break;
 
-
-            /* // send a standard http response header
-               client.println("HTTP/1.1 200 OK");
-               client.println("Content-Type: text/html");
-               client.println("Connection: close");
-               client.println();
-               // send web page
-               client.println("<!DOCTYPE html>");
-               client.println("<html>");
-               client.println("<head>");
-               client.println("<title>Arduino Web Page</title>");
-               client.println("</head>");
-               client.println("<body>");
-               client.println("<h1>Hello from Arduino!</h1>");
-               client.println("<p>A web page from my Arduino server</p>");
-               client.println("<p style=\"color:red\">Red<form><input type=\"text\"></form></p>");
-               client.println("<p style=\"color:blue\">Blue<form><input type=\"text\"></form></p>");
-               client.println("<p style=\"color:green\">Green<form><input type=\"text\"></form></p>");
-               client.println("<button type=\"button\"onclick=\"GetColors()\">Set Color</button>");
-               client.println("</body>");
-               client.println("</html>");
-               break; */
           }
           else
           { // if you got a newline, then clear currentLine:
@@ -408,14 +382,14 @@ void loop() {
 
 
       // Check to see if the client request was "GET /H" or "GET /L":
-      if (currentLine.endsWith("GET /H"))
+      if (currentLine.endsWith("GET /HeaterEn"))
       {
-        digitalWrite(HEATER_ENABLE, HIGH);               // GET /H turns the LED on
+        digitalWrite(HEATER_ENABLE, HIGH);               // GET /HeaterEn turns the heater on
         heater_state = "running";
       }
-      if (currentLine.endsWith("GET /L"))
+      if (currentLine.endsWith("GET /HeaterDis"))
       {
-        digitalWrite(HEATER_ENABLE, LOW);               // GET /L turns the LED off
+        digitalWrite(HEATER_ENABLE, LOW);               // GET /HeaterDis turns the heater off
         heater_state = "idle";
       }
     }
