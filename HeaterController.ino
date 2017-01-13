@@ -56,6 +56,8 @@ int print2digits(int number);
 float calc_temp(int adc_val);
 void create_graph_yaxis(int x_pos, int y_pos, int height, int max_val, uint16_t color);
 void update_graph(int x_pos, int y_pos, int val, uint16_t color);
+void draw_web_graph(int data[], int num_points, int height, int x_step, String line_colour, int val_pos, WiFiClient *client);
+
 
 //////////////////// Web server stuff ///////////////////
 IPAddress ip(192, 168, 1, 1); //default IP address (a new onew will be assigned by DHCP)
@@ -82,8 +84,9 @@ const float temp_factor = -0.01179;
 int max_temp = 40;
 float temp_inlet = 0;
 float temp_outlet = 0;
-String heater_state = "idle";
 unsigned long pump_strokes = 0;
+unsigned long last_pump_strokes = 0;
+unsigned strokes_per_min = 0;
 const float pump_volume = 0.000025;
 
 void interruptFunction() {
@@ -109,8 +112,16 @@ const int graph_x_pos = 0;
 int graph_y_pos = tft.height();
 
 String control_state = "local";
+String heater_state = "idle";
+String heater_power = "Off";
 
 int graph_cursor = graph_x_pos + 25;
+
+byte temp_history_pointer = 0;
+
+int inlet_temp_history[75];
+int outlet_temp_history[75];
+
 
 //////////////////// RTC Stuff //////////////////////
 
@@ -137,6 +148,8 @@ int last_year = 17;
 
 
 void setup() {
+  memset (inlet_temp_history, 0, sizeof(inlet_temp_history));
+  memset (outlet_temp_history, 0, sizeof(outlet_temp_history));
 
   /////////// Initialise the TFT ///////////
   tft.begin();
@@ -235,6 +248,8 @@ void loop() {
   //Update the display every second
   if (rtc.getSeconds() != last_seconds)
   {
+    //Update the DAC
+    analogWrite(TEMP_SET_ANALOGUE, map(set_temp, MIN_SETPOINT_TEMP, MAX_SETPOINT_TEMP, 160, 190));
     //Update the temperature sensor inputs
     temp_inlet = calc_temp(analogRead(TEMP_INLET_PIN));
     temp_outlet = calc_temp(analogRead(TEMP_OUTLET_PIN));
@@ -274,7 +289,7 @@ void loop() {
 
     /////////////////// Print the time and date //////////////
     tft.setTextSize(1);
-    tft.fillRect(time_pos_x, time_pos_y, 320, 8, ILI9340_BLACK);
+    tft.fillRect(time_pos_x, time_pos_y, 160, 8, ILI9340_BLACK);
     tft.setTextColor(ILI9340_WHITE);
     tft.setCursor(time_pos_x, time_pos_y);
     // Print date...
@@ -292,6 +307,48 @@ void loop() {
     tft.print(":");
     last_seconds =  print2digits(rtc.getSeconds());
     tft.setTextSize(2);
+
+    // Every 10s check the pump strokes and update the temp history
+    if (last_seconds == 0 || last_seconds == 10 || last_seconds == 20 || last_seconds == 30 || last_seconds == 40 || last_seconds == 50)
+    {
+      //update the temp history
+      inlet_temp_history[temp_history_pointer] = temp_inlet;
+      outlet_temp_history[temp_history_pointer] = temp_outlet;
+
+      //Move the poiunter
+      if (temp_history_pointer == 30)
+      {
+        temp_history_pointer = 0;
+      }
+      else
+      {
+        temp_history_pointer++;
+      }
+
+    }
+
+    //Every minute update the pump rate
+    if (last_minutes != rtc.getMinutes())
+    {
+      strokes_per_min = pump_strokes - last_pump_strokes;
+      last_pump_strokes = pump_strokes;
+      if (strokes_per_min < 10)
+      {
+        heater_power = "Off";
+      }
+      else if (strokes_per_min >= 10 && strokes_per_min < 100)
+      {
+        heater_power = "Low";
+      }
+      else if (strokes_per_min >= 100 && strokes_per_min < 160)
+      {
+        heater_power = "Med";
+      }
+      else
+      {
+        heater_power = "High";
+      }
+    }
   }
 
 
@@ -312,7 +369,7 @@ void loop() {
           // if the current line is blank, you got two newline characters in a row.
           // that's the end of the client HTTP request, so send a response:
           if (currentLine.length() == 0) {
-            clinet_resp = true;
+            clinet_resp = false;
             // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
             // and a content-type so the client knows what's coming, then a blank line:
             client.println("HTTP/1.1 200 OK");
@@ -320,44 +377,23 @@ void loop() {
             client.println();
 
             client.println("<HTML>");
+
             client.println("<HEAD>");
             //client.println("<meta http-equiv= \"refresh\" content= \"2\" >");
             client.println("<TITLE>Heater Control</TITLE>");
-
-            client.println("<script type = \"text/javascript\">");
-            //            client.println("function create_time_url(){");
-            //            client.println("var client_date = new Date();");
-            //            client.println("var client_year = Date().getYear();");
-            //            client.println("var client_month = Date().getMonth();");
-            //            client.println("var client_day = Date().getDay();");
-            //            client.println("var client_hour = Date().getHour();");
-            //            client.println("var client_min = Date().getMinutes();");
-            //            client.println("var url = window.location.href;");
-            //            client.println("url = url + client_date;");
-            //            //client.println("url = url + \"\time\\\";");
-            //            client.println("return url;}");
-
-            client.println("var baseurl = window.location.href;");
-            client.println("baseurl = baseurl.substring(0 , baseurl.indexOf('?'))");
-
-            client.println("</script >");
             client.println("</HEAD>");
 
-
+            client.println("<BODY>");
 
             client.println("<H1>Boys Room Heater Control</H1>");
-            //            if (heater_state != "running")
-            //            {
+
             client.print("<button onClick=\"window.location=baseurl + '?HeaterEn'\" style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("Heater Enable");
             client.println("</button>");
-            //            }
-            //            else
-            //            {
+
             client.print("<button onClick=\"window.location=baseurl + '?HeaterDis'\" style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("Heater Disable");
             client.println("</button>");
-            //            }
 
             client.println("<br>");
             client.println("<br>");
@@ -367,11 +403,12 @@ void loop() {
             client.println("<br>");
 
             client.println("<br>");
-            client.print("<button onClick=\"window.location=baseurl + '?temp' + 10 ;return false\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
+            // client.print("<button onClick=\"window.location=baseurl + '?temp' + 16;return false\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
+            client.print("<button onClick=\"set_temp()\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("Set Temp");
             client.println("</button>");
 
-            client.println("<input type=\"text\" name=\"settemp\"><br>");
+            client.println("<input type=\"number\" id=\"settemp\" value=\"18\" maxlength=\"2\" max=\"25\" min=\"5\"/>");
             client.println("<br>");
 
             client.print("<br>");
@@ -398,16 +435,53 @@ void loop() {
             client.print(" (");
             client.print(set_temp);
             client.print(")");
-            client.print("<br>");
+            client.println("<br>");
             client.print("Outlet temp  = ");
             client.print(temp_outlet);
-            client.print("<br>");
+            client.println("<br>");
             client.print("Fuel Used(l)    = ");
             client.print(pump_strokes * pump_volume, 4);
-            client.print("<br>");
+            client.println("<br>");
+            client.print("Pump Strokes Per Min = ");
+            client.print(strokes_per_min);
+            client.println("<br>");
             client.print("Heater State = ");
             client.print(heater_state);
-            client.print("<br>");
+            client.println("<br>");
+            client.print("Heater Power = ");
+            client.print(heater_power);
+            client.println("<br>");
+            
+            //Create a canvas to draw the temperature history onto
+            client.println(" <canvas id=\"myCanvas\" width=\"300\" height=\"150\" style=\"border:1px solid #d3d3d3;\">");
+            client.println("Your browser does not support the HTML5 canvas tag.</canvas>");
+
+            client.println("<script type = \"text/javascript\">");
+
+            //Create a base URL to strip all added parameters by the client
+            client.println("var baseurl = window.location.href;");
+            client.println("baseurl = baseurl.substring(0 , baseurl.indexOf('?'));");
+            //The best way I have found of adding the temp parameter is in the script (I may move all parameters to script based
+            client.println("function set_temp() {window.location=baseurl + '?temp' + document.getElementById(\"settemp\").value;}");
+
+            //Create a canvas to draw the temperature history onto
+            client.println("var c = document.getElementById(\"myCanvas\");");
+            client.println("var ctx = c.getContext(\"2d\");");
+            client.println("ctx.lineWidth = \"3\";");
+
+            //Put a time stamp on the oragin of the graph
+            client.println("ctx.font = \"8px Arial\";");
+            client.print("ctx.fillText(\"");
+            client.print(last_hours);
+            client.print(":");
+            client.print(last_minutes);
+            client.print("\"");
+            client.println(", 0, 150);");
+
+            draw_web_graph(inlet_temp_history, temp_history_pointer, 150, 4, "blue", 12, &client);
+            draw_web_graph(outlet_temp_history, temp_history_pointer, 150, 4, "red", -12, &client);
+            
+            client.println("</script >");
 
             client.println("</BODY>");
             client.println("</HTML>");
@@ -422,11 +496,7 @@ void loop() {
           else
           { // if you got a newline, then clear currentLine:
             currentLine = "";
-            tft.setTextSize(1);
-            tft.setTextColor(ILI9340_WHITE);
-            tft.setCursor(time_pos_x + 160, time_pos_y);
-            tft.println("end!");
-            tft.setTextSize(2);
+            clinet_resp = true;
           }
         }
         else if (c != '\r')
@@ -437,6 +507,7 @@ void loop() {
         {
           if (clinet_resp)
           {
+
             clinet_resp = false;
             if (currentLine.endsWith("HeaterEn"))
             {
@@ -450,13 +521,21 @@ void loop() {
             }
             else if (currentLine.indexOf("time") > 0)
             {
-              String epochString = currentLine.substring(currentLine.indexOf("time") + 4, currentLine.length());
-              int epoch = epochString.toInt();
+              int time_start_index = currentLine.indexOf("time") + 4;
+              String epochString = currentLine.substring(time_start_index, currentLine.length() - 3); //Ignore the mili seconds!
+              unsigned long epoch = strtoul(epochString.c_str(), NULL, 10);
               rtc.setEpoch(epoch);
             }
             else if (currentLine.indexOf("temp") > 0)
             {
-              String tempString = currentLine.substring(currentLine.indexOf("temp") + 4, currentLine.indexOf(" "));
+              String tempString = currentLine.substring(currentLine.indexOf("temp") + 4, currentLine.length());
+              tft.fillRect(160, time_pos_y, 320, 8, ILI9340_BLACK);
+              tft.setTextSize(1);
+              tft.setTextColor(ILI9340_WHITE);
+              tft.setCursor(time_pos_x + 160, time_pos_y);
+              //tft.println(epochString);
+              tft.println(tempString);
+              tft.setTextSize(2);
               set_temp = tempString.toInt();
             }
           }
@@ -567,4 +646,59 @@ void update_graph(int x_pos, int y_pos, int val, int max_val, uint16_t color)
   val = map(val, 0, max_val, 0, 100);
   //Draw the line
   tft.drawFastVLine(graph_cursor, tft.height() - val, 3, color);
+}
+
+void draw_web_graph(int data[], int num_points, int height, int x_step, String line_colour, int val_pos, WiFiClient *client)
+{
+  //Define the line colour
+  client->print("ctx.strokeStyle = \"");
+  client->print(line_colour);
+  client->println("\";");
+
+  //Define the starting position (X=0 Y = array[0])
+  client->println("ctx.beginPath();");
+  client->print("ctx.moveTo(0,");
+  client->print(data[0]);
+  client->println(");");
+
+  //Loop around to create the line
+  for (int graph_x_pos = 1; graph_x_pos < num_points; graph_x_pos ++)
+  {
+    client->print("ctx.lineTo(");
+    client->print(graph_x_pos * x_step);
+    client->print(", ");
+    client->print(height - data[graph_x_pos]);
+    client->println(");");
+  }
+  client->println("ctx.stroke();");  // Draw it
+
+  //Draw the terminal line
+
+  client->println("ctx.strokeStyle = \"black\";");  //Black end marke
+  client->println("ctx.beginPath();");
+
+  client->print("ctx.moveTo(");
+  client->print((num_points - 1) * 4);
+  client->print(", ");
+  client->print(5 + height - data[(num_points - 1)]);
+  client->println(");");
+
+  client->print("ctx.lineTo(");
+  client->print((num_points - 1) * 4);
+  client->print(", ");
+  client->print(height - 5 - data[(num_points - 1)]);
+  client->println(");");
+
+  client->println("ctx.stroke();");  // Draw it
+
+  //Put a time stamp on the last point
+  client->print("ctx.font = \"8px Arial\";");
+  client->print("ctx.fillText(\"");
+  client->print(data[(num_points - 1)]);
+  client->print("\"");
+  client->print(", ");
+  client->print((num_points - 1) * 4);
+  client->print(", ");
+  client->print(height + val_pos - data[(num_points - 1)]);
+  client->println(");");
 }
