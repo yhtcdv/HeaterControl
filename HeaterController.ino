@@ -45,8 +45,9 @@
 #define TFT_DC 12
 #define TFT_RST 11
 
-#define TEMP_INLET_PIN A2
-#define TEMP_OUTLET_PIN A1
+#define TEMP_INLET_PIN A1
+#define TEMP_OUTLET_PIN A2
+#define TEMP_AMBIENT A3
 
 
 // Declare function prototypes
@@ -84,6 +85,7 @@ const float temp_factor = -0.01179;
 int max_temp = 40;
 float temp_inlet = 0;
 float temp_outlet = 0;
+float temp_ambient = 0;
 unsigned long pump_strokes = 0;
 unsigned long last_pump_strokes = 0;
 unsigned strokes_per_min = 0;
@@ -94,7 +96,7 @@ void interruptFunction() {
 }
 
 //////////////////// Control Stuff /////////////////
-int set_temp = 20;
+int set_temp = 16;
 
 //////////////////// Display Stuff //////////////////////
 const int temp_value_pos_x = 15 * 12;
@@ -119,7 +121,7 @@ int graph_cursor = graph_x_pos + 25;
 
 byte temp_history_pointer = 0;
 
-int inlet_temp_history[75];
+int ambient_temp_history[75];
 int outlet_temp_history[75];
 
 
@@ -145,11 +147,15 @@ int last_day = 1;
 int last_month = 1;
 int last_year = 17;
 
+int time_stamp_minutes = 0;
+int time_stamp_hours = 0;
+
 
 
 void setup() {
-  memset (inlet_temp_history, 0, sizeof(inlet_temp_history));
+  //Initialise the memory
   memset (outlet_temp_history, 0, sizeof(outlet_temp_history));
+  memset (ambient_temp_history, 0, sizeof(ambient_temp_history));
 
   /////////// Initialise the TFT ///////////
   tft.begin();
@@ -195,7 +201,7 @@ void setup() {
   tft.println(ip);                   // print the network name (SSID);
   tft.setCursor(0, temp_value_pos_y);
   tft.setTextSize(2);
-  tft.println("Set temp     = ");
+  tft.println("Ambient temp = ");
   tft.println("Inlet temp   = ");
   tft.println("Outlet temp  = ");
   tft.println("Fuel Used(l) = ");
@@ -209,7 +215,7 @@ void setup() {
   tft.setCursor(0, tft.height() - graph_height - 28);
   tft.setTextSize(1);
   tft.setTextColor(ILI9340_YELLOW);
-  tft.println("Set Temp");
+  tft.println("Ambient Temp");
   tft.setTextColor(ILI9340_BLUE);
   tft.println("Inlet Temp");
 
@@ -253,10 +259,12 @@ void loop() {
     //Update the temperature sensor inputs
     temp_inlet = calc_temp(analogRead(TEMP_INLET_PIN));
     temp_outlet = calc_temp(analogRead(TEMP_OUTLET_PIN));
+    temp_ambient = calc_temp(analogRead(TEMP_AMBIENT));
+
     //Draw the graph
     update_graph(graph_x_pos, graph_y_pos, temp_outlet, 140, ILI9340_RED);
     update_graph(graph_x_pos, graph_y_pos, temp_inlet, 50, ILI9340_BLUE);
-    update_graph(graph_x_pos, graph_y_pos, set_temp, 50, ILI9340_YELLOW);
+    update_graph(graph_x_pos, graph_y_pos, temp_ambient, 50, ILI9340_YELLOW);
 
     if (graph_cursor ==  graph_width - 40)
     {
@@ -276,49 +284,31 @@ void loop() {
     //Update the temperature and other parameters
     tft.fillRect(temp_value_pos_x, temp_value_pos_y,  tft.height() - temp_value_pos_y, 80, ILI9340_BLACK);
     tft.setCursor(temp_value_pos_x, temp_value_pos_y);
-    tft.println(set_temp);
+    tft.print(temp_ambient);
+    tft.print("("); tft.print(set_temp); tft.print(")");
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 16);
     tft.println(temp_inlet);
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 32);
     tft.println(temp_outlet);
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 48);
     tft.println(pump_strokes * pump_volume, 4);
-    //tft.print("("); tft.print(pump_strokes); tft.print(")");
+   
     tft.setCursor(temp_value_pos_x, temp_value_pos_y + 64);
     tft.println(heater_state);
-
-    /////////////////// Print the time and date //////////////
-    tft.setTextSize(1);
-    tft.fillRect(time_pos_x, time_pos_y, 160, 8, ILI9340_BLACK);
-    tft.setTextColor(ILI9340_WHITE);
-    tft.setCursor(time_pos_x, time_pos_y);
-    // Print date...
-    last_day =  print2digits(rtc.getDay());
-    tft.print("/");
-    last_month =  print2digits(rtc.getMonth());
-    tft.print("/");
-    last_year =  print2digits(rtc.getYear());
-    tft.print(" ");
-
-    // ...and time
-    last_hours = print2digits(rtc.getHours());
-    tft.print(":");
-    last_minutes =  print2digits(rtc.getMinutes());
-    tft.print(":");
-    last_seconds =  print2digits(rtc.getSeconds());
-    tft.setTextSize(2);
 
     // Every 10s check the pump strokes and update the temp history
     if (last_seconds == 0 || last_seconds == 10 || last_seconds == 20 || last_seconds == 30 || last_seconds == 40 || last_seconds == 50)
     {
       //update the temp history
-      inlet_temp_history[temp_history_pointer] = temp_inlet;
       outlet_temp_history[temp_history_pointer] = temp_outlet;
+      ambient_temp_history[temp_history_pointer] = temp_ambient;
 
       //Move the poiunter
-      if (temp_history_pointer == 30)
+      if (temp_history_pointer == sizeof(outlet_temp_history) - 1)
       {
         temp_history_pointer = 0;
+        time_stamp_minutes = last_minutes;
+        time_stamp_hours = last_hours;
       }
       else
       {
@@ -349,6 +339,27 @@ void loop() {
         heater_power = "High";
       }
     }
+
+    /////////////////// Print the time and date //////////////
+    tft.setTextSize(1);
+    tft.fillRect(time_pos_x, time_pos_y, 160, 8, ILI9340_BLACK);
+    tft.setTextColor(ILI9340_WHITE);
+    tft.setCursor(time_pos_x, time_pos_y);
+    // Print date...
+    last_day =  print2digits(rtc.getDay());
+    tft.print("/");
+    last_month =  print2digits(rtc.getMonth());
+    tft.print("/");
+    last_year =  print2digits(rtc.getYear());
+    tft.print(" ");
+
+    // ...and time
+    last_hours = print2digits(rtc.getHours());
+    tft.print(":");
+    last_minutes =  print2digits(rtc.getMinutes());
+    tft.print(":");
+    last_seconds =  print2digits(rtc.getSeconds());
+    tft.setTextSize(2);
   }
 
 
@@ -379,8 +390,9 @@ void loop() {
             client.println("<HTML>");
 
             client.println("<HEAD>");
-            //client.println("<meta http-equiv= \"refresh\" content= \"2\" >");
             client.println("<TITLE>Heater Control</TITLE>");
+            client.println("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+            client.println("<meta http-equiv=\"refresh\" content=\"5\"; URL=baseurl>");
             client.println("</HEAD>");
 
             client.println("<BODY>");
@@ -397,18 +409,17 @@ void loop() {
 
             client.println("<br>");
             client.println("<br>");
-            client.print("<button onClick=\"window.location=baseurl + '?time' + (new Date().valueOf());return false\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
+            client.print("<button onClick=\"set_time()\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("Set Time");
             client.println("</button>");
             client.println("<br>");
 
             client.println("<br>");
-            // client.print("<button onClick=\"window.location=baseurl + '?temp' + 16;return false\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("<button onClick=\"set_temp()\"; style='FONT-SIZE: 12px; HEIGHT: 25px; FONT-FAMILY: Arial; WIDTH: 100px;'>");
             client.print("Set Temp");
             client.println("</button>");
 
-            client.println("<input type=\"number\" id=\"settemp\" value=\"18\" maxlength=\"2\" max=\"25\" min=\"5\"/>");
+            client.println("<input type=\"number\" id=\"settemp\" value=\"16\" maxlength=\"2\" max=\"25\" min=\"5\"/>");
             client.println("<br>");
 
             client.print("<br>");
@@ -432,12 +443,15 @@ void loop() {
 
             client.print("Inlet temp   = ");
             client.print(temp_inlet);
-            client.print(" (");
-            client.print(set_temp);
-            client.print(")");
             client.println("<br>");
             client.print("Outlet temp  = ");
             client.print(temp_outlet);
+            client.println("<br>");
+            client.print("Ambient temp  = ");
+            client.print(temp_ambient);
+            client.print(" (");
+            client.print(set_temp);
+            client.print(")");
             client.println("<br>");
             client.print("Fuel Used(l)    = ");
             client.print(pump_strokes * pump_volume, 4);
@@ -451,7 +465,7 @@ void loop() {
             client.print("Heater Power = ");
             client.print(heater_power);
             client.println("<br>");
-            
+
             //Create a canvas to draw the temperature history onto
             client.println(" <canvas id=\"myCanvas\" width=\"300\" height=\"150\" style=\"border:1px solid #d3d3d3;\">");
             client.println("Your browser does not support the HTML5 canvas tag.</canvas>");
@@ -461,8 +475,14 @@ void loop() {
             //Create a base URL to strip all added parameters by the client
             client.println("var baseurl = window.location.href;");
             client.println("baseurl = baseurl.substring(0 , baseurl.indexOf('?'));");
-            //The best way I have found of adding the temp parameter is in the script (I may move all parameters to script based
+            
+            client.println("setTimeout(function(){location.assign(baseurl)}, 5000);");
+
+            //The best way I have found of adding the temp parameter is in the script (I may move all parameters to script based)
+            //Set temperature function
             client.println("function set_temp() {window.location=baseurl + '?temp' + document.getElementById(\"settemp\").value;}");
+            //Set time function
+            client.println("function set_time() {window.location=baseurl + '?time' + (new Date().valueOf())}");
 
             //Create a canvas to draw the temperature history onto
             client.println("var c = document.getElementById(\"myCanvas\");");
@@ -472,15 +492,15 @@ void loop() {
             //Put a time stamp on the oragin of the graph
             client.println("ctx.font = \"8px Arial\";");
             client.print("ctx.fillText(\"");
-            client.print(last_hours);
+            client.print(time_stamp_hours);
             client.print(":");
-            client.print(last_minutes);
+            client.print(time_stamp_minutes);
             client.print("\"");
             client.println(", 0, 150);");
 
-            draw_web_graph(inlet_temp_history, temp_history_pointer, 150, 4, "blue", 12, &client);
+            draw_web_graph(ambient_temp_history, temp_history_pointer, 150, 4, "blue", 12, &client);
             draw_web_graph(outlet_temp_history, temp_history_pointer, 150, 4, "red", -12, &client);
-            
+
             client.println("</script >");
 
             client.println("</BODY>");
@@ -529,13 +549,6 @@ void loop() {
             else if (currentLine.indexOf("temp") > 0)
             {
               String tempString = currentLine.substring(currentLine.indexOf("temp") + 4, currentLine.length());
-              tft.fillRect(160, time_pos_y, 320, 8, ILI9340_BLACK);
-              tft.setTextSize(1);
-              tft.setTextColor(ILI9340_WHITE);
-              tft.setCursor(time_pos_x + 160, time_pos_y);
-              //tft.println(epochString);
-              tft.println(tempString);
-              tft.setTextSize(2);
               set_temp = tempString.toInt();
             }
           }
